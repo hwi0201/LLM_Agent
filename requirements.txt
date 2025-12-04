@@ -2,8 +2,10 @@ python-dotenv
 openai
 requests
 wikipedia
+langchain
 langchain-community
 langchain-openai
 langchain 
 langchainhub
 streamlit
+tavily-python
