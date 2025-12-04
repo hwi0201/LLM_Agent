@@ -235,28 +235,24 @@ def convert_currency_budget(budget: float, from_currency: str = "KRW", to_curren
 @tool
 def generate_weather_based_schedule(weather_summary: str, preferred_activities: str) -> dict:
     """
-    날씨 기반 일정 최적화 가이드 제공 (NEW)
-    이 툴은 실제 계산보다는 LLM에게 최적화 로직을 주입하기 위한 헬퍼입니다.
+    날씨와 선호 활동을 분석하여 '일정 배치 전략'과 'Plan B 가이드'를 생성합니다.
+    이 툴은 실제 일정을 짜기 전, 전략을 수립하는 단계에서 호출하십시오.
 
     Args:
-        weather_summary: 날씨 요약 (예: "1일차 비, 2일차 맑음")
-        preferred_activities: 선호 활동
-
-    Returns:
-        dict: 최적화 규칙
+        weather_summary: 날씨 예보 (예: "1일차 비, 2일차 맑음/강풍, 3일차 맑음")
+        preferred_activities: 사용자 선호 (예: "해산물, 오름 등반, 카페")
     """
     return {
-        "optimization_rules": [
-            "맑은 날: 야외 활동(등산, 오름, 해변) 우선 배정",
-            "비/흐림: 실내 활동(박물관, 시장, 카페) 우선 배정",
-            "강풍: 해안가 및 산행 주의, 실내 대안(Plan B) 마련",
-            "동선 최적화: 가까운 지역끼리 묶어서 이동 시간 최소화"
-        ],
-        "input_context": {
-            "weather": weather_summary,
-            "activities": preferred_activities
+        "strategy_analysis": {
+            "best_day_for_outdoor": "날씨가 가장 맑고 바람이 적은 날을 선택하여 야외 활동(등산, 바다)을 배치하세요.",
+            "indoor_allocation": "비가 오거나 강풍이 부는 날에는 박물관, 시장, 카페 투어 등 실내 활동을 우선 배치하세요.",
+            "route_optimization": "이동 동선을 고려하여 근접한 관광지를 묶으십시오."
         },
-        "instruction": "위 규칙에 따라 일정을 재배치하고, 궃은 날씨에는 반드시 Plan B를 제시하세요."
+        "plan_b_guide": {
+            "condition": "기상 악화(우천, 강풍, 폭염, 한파) 발생 시",
+            "action": "기존 야외 일정을 즉시 취소하고, 사전에 조사된 '실내 대안 장소(Plan B)'로 대체하십시오."
+        },
+        "safety_note": "강풍/호우 주의보가 있는 날은 해안가 접근 및 산행을 자제하도록 경고 문구를 넣으십시오."
     }
 
 

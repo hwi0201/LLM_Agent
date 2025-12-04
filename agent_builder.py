@@ -22,7 +22,7 @@ def build_travel_agent(model_name="gpt-4o-mini"):
     # 1. LLM 초기화 (Tools 바인딩)
     llm = ChatOpenAI(
         model=model_name,
-        temperature=0.7,
+        temperature=0.5,
         api_key=os.environ.get("OPENAI_API_KEY")
     )
     
