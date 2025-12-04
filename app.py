@@ -42,6 +42,7 @@ st.set_page_config(
 TOOL_EMOJIS = {
     "날씨": "🌤️",
     "weather": "🌤️",
+    "search_weather": "🌤️",
     "맛집": "🍽️",
     "restaurant": "🍽️",
     "관광": "🏛️",
@@ -66,9 +67,10 @@ TOOL_EMOJIS = {
 class StreamlitAgentCallbackHandler(BaseCallbackHandler):
     """Custom callback handler to visualize agent thinking process in Streamlit"""
     
-    def __init__(self):
+    def __init__(self, result_container=None):
         self.tool_executions = []
         self.current_tool = None
+        self.result_container = result_container  # 실시간 결과 표시용 컨테이너
         
     def on_tool_start(self, serialized: Dict[str, Any], input_str: str, **kwargs) -> None:
         """Called when a tool starts executing"""
@@ -87,12 +89,48 @@ class StreamlitAgentCallbackHandler(BaseCallbackHandler):
             st.session_state.tool_executions = []
         st.session_state.tool_executions.append(self.current_tool)
         
-    def on_tool_end(self, output: str, **kwargs) -> None:
+        # 실시간으로 실행 중인 tool 표시
+        if self.result_container:
+            with self.result_container:
+                emoji = get_tool_emoji(tool_name)
+                st.info(f"{emoji} **{tool_name}** 실행 중... | 입력: {str(input_str)[:100]}")
+        
+    def on_tool_end(self, output, **kwargs) -> None:
         """Called when a tool finishes executing"""
         if self.current_tool:
             self.current_tool["status"] = "completed"
-            self.current_tool["output"] = str(output)
+            # output을 원본 형태로 저장 (dict일 수 있음)
+            self.current_tool["output"] = output
             self.current_tool["end_time"] = datetime.now()
+            
+            # 실시간으로 완료된 tool 결과를 JSON 형식으로 표시
+            if self.result_container:
+                with self.result_container:
+                    tool_name = self.current_tool["name"]
+                    emoji = get_tool_emoji(tool_name)
+                    
+                    # JSON 형식으로 결과 표시
+                    try:
+                        import json
+                        # output이 dict나 list인 경우 직접 st.json() 사용
+                        if isinstance(output, (dict, list)):
+                            with st.expander(f"{emoji} ✅ {tool_name} - 완료", expanded=True):
+                                st.json(output)
+                        else:
+                            # 문자열인 경우 JSON 파싱 시도
+                            try:
+                                parsed = json.loads(str(output))
+                                with st.expander(f"{emoji} ✅ {tool_name} - 완료", expanded=True):
+                                    st.json(parsed)
+                            except:
+                                # JSON이 아닌 경우 일반 텍스트로 표시
+                                with st.expander(f"{emoji} ✅ {tool_name} - 완료", expanded=True):
+                                    st.text_area("**출력:**", value=str(output), height=200, disabled=True)
+                    except Exception as e:
+                        # 예외 발생 시 일반 텍스트로 표시
+                        with st.expander(f"{emoji} ✅ {tool_name} - 완료", expanded=True):
+                            st.text_area("**출력:**", value=str(output), height=200, disabled=True)
+            
             self.current_tool = None
     
     def on_tool_error(self, error: Exception, **kwargs) -> None:
@@ -137,28 +175,40 @@ def initialize_agent(use_mock: bool = False):
     
     try:
         # Try to import from Team Member A's files
-        # Try different import patterns for tools
+        # Import tools - tools.py exports ALL_TOOLS
         try:
-            from tools import get_tools
-            tools = get_tools()
+            from tools import ALL_TOOLS
+            tools = ALL_TOOLS
         except (ImportError, AttributeError):
+            # Fallback: try get_tools() function
             try:
-                from tools import tools as tools_list
-                tools = tools_list
+                from tools import get_tools
+                tools = get_tools()
             except (ImportError, AttributeError):
-                raise ImportError("tools.py에서 tools를 가져올 수 없습니다")
+                # Fallback: try tools variable
+                try:
+                    from tools import tools as tools_list
+                    tools = tools_list
+                except (ImportError, AttributeError):
+                    raise ImportError("tools.py에서 tools를 가져올 수 없습니다")
         
-        # Try different import patterns for prompts
+        # Import prompts - prompts.py exports get_agent_prompt()
         try:
-            from prompts import get_prompt
-            prompt = get_prompt()
+            from prompts import get_agent_prompt
+            prompt = get_agent_prompt()
         except (ImportError, AttributeError):
+            # Fallback: try get_prompt() function
             try:
-                from prompts import prompt as prompt_template
-                prompt = prompt_template
+                from prompts import get_prompt
+                prompt = get_prompt()
             except (ImportError, AttributeError):
-                # Fallback to default prompt from hub
-                prompt = hub.pull("hwchase17/openai-functions-agent")
+                # Fallback: try prompt variable
+                try:
+                    from prompts import prompt as prompt_template
+                    prompt = prompt_template
+                except (ImportError, AttributeError):
+                    # Fallback to default prompt from hub
+                    prompt = hub.pull("hwchase17/openai-functions-agent")
         
         # Initialize LLM
         llm = ChatOpenAI(
@@ -184,8 +234,23 @@ def initialize_agent(use_mock: bool = False):
         else:
             # Try one more time with alternative patterns
             try:
-                from tools import tools as tools_list
-                from prompts import prompt as prompt_template
+                # Try ALL_TOOLS
+                try:
+                    from tools import ALL_TOOLS
+                    tools_list = ALL_TOOLS
+                except (ImportError, AttributeError):
+                    from tools import tools as tools_list
+                
+                # Try get_agent_prompt
+                try:
+                    from prompts import get_agent_prompt
+                    prompt_template = get_agent_prompt()
+                except (ImportError, AttributeError):
+                    try:
+                        from prompts import get_prompt
+                        prompt_template = get_prompt()
+                    except (ImportError, AttributeError):
+                        from prompts import prompt as prompt_template
                 
                 llm = ChatOpenAI(
                     model=st.session_state.get("model", "gpt-4o-mini"),
@@ -274,7 +339,7 @@ def display_thinking_process():
     # Show running tools first
     if running_tools:
         st.markdown("#### 🔄 실행 중인 도구")
-        for tool_exec in running_tools[-3:]:  # Show last 3 running
+        for idx, tool_exec in enumerate(running_tools[-3:]):  # Show last 3 running
             tool_name = tool_exec.get("name", "unknown")
             emoji = get_tool_emoji(tool_name)
             st.info(f"{emoji} **{tool_name}** 실행 중... | 입력: {tool_exec.get('input', 'N/A')[:100]}")
@@ -282,25 +347,30 @@ def display_thinking_process():
     # Show completed tools
     if completed_tools:
         st.markdown("#### ✅ 완료된 도구")
-    for tool_exec in completed_tools[-5:]:  # Show last 5 completed
+    for idx, tool_exec in enumerate(completed_tools[-5:]):  # Show last 5 completed
         tool_name = tool_exec.get("name", "unknown")
         emoji = get_tool_emoji(tool_name)
+        start_time = tool_exec.get("start_time", "")
+        unique_key = f"completed_{tool_name}_{idx}_{hash(str(start_time))}"
         
-        with st.expander(f"{emoji} ✅ {tool_name} - 완료", expanded=False):
+        with st.expander(f"{emoji} ✅ {tool_name} - 완료", expanded=False, key=f"expander_{unique_key}"):
             st.info(f"**입력:** {tool_exec.get('input', 'N/A')}")
             output = tool_exec.get('output', 'N/A')
             if len(str(output)) > 500:
-                st.text_area("**출력:**", value=str(output)[:500] + "...", height=100, disabled=True, key=f"output_{tool_name}_{id(tool_exec)}")
+                st.text_area("**출력:**", value=str(output)[:500] + "...", height=100, disabled=True, key=f"output_{unique_key}")
             else:
-                st.text_area("**출력:**", value=str(output), height=100, disabled=True, key=f"output_{tool_name}_{id(tool_exec)}")
+                st.text_area("**출력:**", value=str(output), height=100, disabled=True, key=f"output_{unique_key}")
     
     # Show error tools
     if error_tools:
         st.markdown("#### ❌ 오류가 발생한 도구")
-    for tool_exec in error_tools:
+    for idx, tool_exec in enumerate(error_tools):
         tool_name = tool_exec.get("name", "unknown")
         emoji = get_tool_emoji(tool_name)
-        with st.expander(f"{emoji} ❌ {tool_name} - 오류", expanded=True):
+        start_time = tool_exec.get("start_time", "")
+        unique_key = f"error_{tool_name}_{idx}_{hash(str(start_time))}"
+        
+        with st.expander(f"{emoji} ❌ {tool_name} - 오류", expanded=True, key=f"expander_error_{unique_key}"):
             st.error(f"**에러:** {tool_exec.get('error', 'Unknown error')}")
             st.info(f"**입력:** {tool_exec.get('input', 'N/A')}")
 
@@ -334,30 +404,23 @@ def initialize_session_state():
 
 def execute_agent_query(user_query: str):
     """Execute agent with user query and display results"""
-    # Display user message
-    with st.chat_message("user"):
-        st.markdown(user_query)
-    
     # Clear previous tool executions
     st.session_state.tool_executions = []
-    
-    # Initialize callback handler
-    callback_handler = StreamlitAgentCallbackHandler()
     
     # Initialize agent
     try:
         agent_executor, is_mock = initialize_agent(use_mock=st.session_state.use_mock)
         
-        if is_mock:
-            st.info("⚠️ 개발 모드: Mock Agent를 사용 중입니다")
-        
-        # Display thinking process area
+        # Display assistant message area
         with st.chat_message("assistant"):
-            thinking_placeholder = st.empty()
+            if is_mock:
+                st.info("⚠️ 개발 모드: Mock Agent를 사용 중입니다")
             
-            # Show thinking process
-            with thinking_placeholder.container():
-                display_thinking_process()
+            # 실시간 tool 결과 표시용 컨테이너
+            realtime_results = st.container()
+            
+            # Initialize callback handler with result container
+            callback_handler = StreamlitAgentCallbackHandler(result_container=realtime_results)
             
             # Execute agent
             with st.spinner("🤔 여행 계획 생성 중..."):
@@ -367,16 +430,44 @@ def execute_agent_query(user_query: str):
                         {"callbacks": [callback_handler]}
                     )
                     
-                    # Update thinking process display
-                    thinking_placeholder.empty()
-                    with thinking_placeholder.container():
-                        display_thinking_process()
-                    
-                    # Display response
+                    # Display final response
+                    st.markdown("---")
+                    st.markdown("### 📋 최종 여행 계획")
                     response = result.get("output", "응답을 생성할 수 없습니다.")
+                    
+                    # D-Day 정보가 tool_executions에 있는지 확인하고 추가
+                    d_day_info = None
+                    for tool_exec in st.session_state.tool_executions:
+                        if tool_exec.get("name") == "calculate_d_day" and tool_exec.get("status") == "completed":
+                            output = tool_exec.get("output")
+                            if isinstance(output, dict):
+                                d_day_info = output
+                            elif isinstance(output, str):
+                                try:
+                                    import json
+                                    d_day_info = json.loads(output)
+                                except:
+                                    pass
+                            break
+                    
+                    # D-Day 정보가 있으면 응답 앞에 추가
+                    if d_day_info and "formatted" in d_day_info:
+                        d_day_section = f"""
+### 📅 여행 D-Day 정보
+
+- **출발일**: {d_day_info.get('date', 'N/A')}
+- **D-Day**: {d_day_info.get('formatted', 'N/A')}
+- **남은 일수**: {d_day_info.get('d_day', 'N/A')}일
+- **준비 기간**: {d_day_info.get('preparation', {}).get('weeks', 'N/A')}주
+- **준비 긴급도**: {d_day_info.get('preparation', {}).get('urgency', 'N/A')}
+
+---
+"""
+                        response = d_day_section + response
+                    
                     st.markdown(response)
                     
-                    # Save to chat history
+                    # Save to chat history (한 번만 저장)
                     st.session_state.messages.append({
                         "role": "assistant",
                         "content": response,
@@ -513,20 +604,23 @@ def main():
                 st.session_state.pending_query = user_input
                 st.rerun()
     
+    # Display chat history (이미 완료된 메시지만 표시)
+    for message in st.session_state.messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+            
+            # Show tool executions if this is an assistant message (완료된 것만)
+            if message["role"] == "assistant" and "tool_executions" in message:
+                # 완료된 tool executions만 표시 (실시간 업데이트는 execute_agent_query에서 처리)
+                if st.session_state.tool_executions:
+                    # 이미 완료된 메시지이므로 간단히 표시
+                    pass
+    
     # Process pending query from button click
     if st.session_state.pending_query:
         pending = st.session_state.pending_query
         st.session_state.pending_query = None  # Clear pending query
         execute_agent_query(pending)
-    
-    # Display chat history
-    for message in st.session_state.messages:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
-            
-            # Show tool executions if this is an assistant message
-            if message["role"] == "assistant" and "tool_executions" in message:
-                display_thinking_process()
     
     # Chat input
     if prompt := st.chat_input("여행 계획을 요청하세요..."):
@@ -534,70 +628,6 @@ def main():
         st.session_state.messages.append({"role": "user", "content": prompt})
         execute_agent_query(prompt)
 
-
-if __name__ == "__main__":
-    main()
-
-여행 계획 AI 비서 - Main Application
-"""
-
-import os
-from dotenv import load_dotenv
-from agent_builder import build_travel_agent
-
-# 환경 변수 로드 (.env 파일)
-load_dotenv()
-
-def main():
-    # API 키 확인
-    if not os.environ.get("OPENAI_API_KEY"):
-        print("❌ 오류: OPENAI_API_KEY가 설정되지 않았습니다. .env 파일을 확인하세요.")
-        return
-    if not os.environ.get("TAVILY_API_KEY"):
-        print("❌ 오류: TAVILY_API_KEY가 설정되지 않았습니다. .env 파일을 확인하세요.")
-        return
-
-    print("=" * 60)
-    print("✈️  여행 계획 AI 비서 v2.0 시작")
-    print("=" * 60)
-
-    # 에이전트 빌드
-    try:
-        agent = build_travel_agent()
-    except Exception as e:
-        print(f"❌ 에이전트 초기화 실패: {e}")
-        return
-
-    # 사용자 입력 (MD 파일의 예시 사용)
-    default_input = "3박 4일 제주도 여행 계획 짜줘, 예산 50만원, 해산물 좋아해, 1월 15일 출발"
-    
-    print("\n💡 예시 입력:")
-    print(f'"{default_input}"')
-    
-    user_input = input("\n여행 요청사항을 입력하세요 (엔터 시 예시 실행): ").strip()
-    
-    if not user_input:
-        user_input = default_input
-
-    print(f"\n🔄 [진행 중] '{user_input}'에 대한 여행 계획을 생성하고 있습니다...\n")
-    print("-" * 60)
-
-    # 에이전트 실행
-    try:
-        result = agent.invoke({"input": user_input})
-        
-        print("\n" + "=" * 60)
-        print("✅ [완료] 여행 계획 생성 결과")
-        print("=" * 60 + "\n")
-        print(result["output"])
-        
-        # 결과를 파일로 저장
-        with open("result_plan.md", "w", encoding="utf-8") as f:
-            f.write(result["output"])
-        print("\n📄 결과가 'result_plan.md' 파일로 저장되었습니다.")
-
-    except Exception as e:
-        print(f"\n❌ 실행 중 오류 발생: {e}")
 
 if __name__ == "__main__":
     main()
